@@ -121,11 +121,6 @@ ONBUILD RUN cd $REPOS_ROOT \
     && git fetch --depth=1 origin $REPOS_BRANCH \
     && git reset --hard FETCH_HEAD
 
-ONBUILD COPY key.pub spack_key.pub
-ONBUILD COPY key spack_key
-ONBUILD RUN spack gpg trust ./spack_key.pub
-ONBUILD RUN spack gpg trust ./spack_key
-
 # Install the software, remove unnecessary deps
 #
 # Unconditionally sets the view to /opt/view for the runtime container
