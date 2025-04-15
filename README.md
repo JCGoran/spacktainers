@@ -220,7 +220,7 @@ This will still require a local GPG key pair to sign packages!
 
 To convert images to Singularity locally, you can first save the OCI image:
 ```
-❯ podman save -o myimage.tar myimage
+❯ podman save --format oci-archive -o myimage.tar myimage
 ```
 Then build an Apptainer `.sif` image using:
 
