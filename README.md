@@ -30,17 +30,8 @@ In both cases, the filename will be used as the name of your container. In case 
    * Build runtime / builder
 2. application containers
    * Build containers
-     * Every package build will be pushed to the cash directly after build
+     * Every package build will be pushed to the local cache directly after build
    * Publish containers
-
-## CI/CD Variables
-
-* `AWS_CACHE_ACCESS_KEY_ID` / `AWS_CACHE_SECRET_ACCESS_KEY`: AWS keypair for accessing the cache bucket hosted by Amazon
-* `AWS_INFRASTRUCTURE_ACCESS_KEY_ID` / `AWS_INFRASTRUCTURE_SECRET_ACCESS_KEY`: AWS keypair for accessing the containers bucket hosted by Amazon (bbpinfrastructureassets)
-* `SPACK_DEPLOYMENT_KEY_PRIVATE`: the Spack private deployment key (as a file!)
-* `SPACK_DEPLOYMENT_KEY_PUBLIC`: the Spack public deployment key (as a file!)
-* `GHCR_USER` / `GHCR_TOKEN`: the user and associated access token to write to the GitHub Container Registry (GHCR)
-* `GITLAB_API_TOKEN`: private (!) gitlab token with API_READ access (CI_JOB_TOKEN does not have enough permissions). Change this once I'm gone
 
 ## Repository layout
 
@@ -51,39 +42,6 @@ Folders of note are:
 * runtime: base container that contains everything needed to run the spack-built environment
 
 ## Pulling images with Apptainer, Podman, or Sarus
-
-Make sure you have your AWS credentials set up.  Then identify the image you want to run.
-In the following, `spacktainers/neurodamus-neocortex` is going to be used.  Identify the
-URL of the registry:
-```
-❯ aws ecr describe-repositories --repository-names spacktainers/neurodamus-neocortex
-{
-    "repositories": [
-        {
-            "repositoryArn": "arn:aws:ecr:us-east-1:130659266700:repository/spacktainers/neurodamus-neocortex",
-            "registryId": "130659266700",
-            "repositoryName": "spacktainers/neurodamus-neocortex",
-            "repositoryUri": "130659266700.dkr.ecr.us-east-1.amazonaws.com/spacktainers/neurodamus-neocortex",
-            "createdAt": "2024-11-20T17:32:11.169000+01:00",
-            "imageTagMutability": "MUTABLE",
-            "imageScanningConfiguration": {
-                "scanOnPush": false
-            },
-            "encryptionConfiguration": {
-                "encryptionType": "AES256"
-            }
-        }
-    ]
-}
-
-```
-Note the `repositoryUri` key. This will be used to log in with either Podman or Sarus.
-
-Get a login token from AWS:
-```
-❯ aws ecr get-login-password
-[secret]
-```
 
 **Note that all images are also available from the GitHub Container Registry (GHCR), i.e.,
 via `apptainer pull docker://ghcr.io/bluebrain/spack-neurodamus-neocortex`. The URL has to
@@ -210,11 +168,6 @@ COPY --from=builder /etc/debian_version /etc/debian_version
 The last line is sometimes required to avoid optimizations that would skip including the
 `builder` container.
 
-Use a local Spack installation to create a GPG keypair to sign built packages, i.e:
-```
-❯ spack gpg create --export-secret key --export key.pub "Le Loup" "le.loup@epfl.ch"
-```
-
 And create a `spack.yaml`, i.e.:
 ```
 spack:
@@ -231,8 +184,11 @@ communications.
 
 Then build the Docker file:
 ```
-❯ podman build --format=docker .
+❯ podman build --format=docker --volume /path/to/cache_dir:/opt/spack-cache .
 ```
+
+The `--volume` argument can be ommitted, but then virtually all of the Spack
+packages will be built from source, which may take a long time.
 
 ### Using the official builder
 
@@ -262,20 +218,14 @@ This will still require a local GPG key pair to sign packages!
 
 ### Converting images to Singularity SIF locally
 
-To convert images to Singularity locally, it seems simplest to first start a local
-Docker registry:
+To convert images to Singularity locally, you can first save the OCI image:
 ```
-❯ podman container run -dt -p 5000:5000 --name registry docker.io/library/registry:2
+❯ podman save -o myimage.tar myimage
 ```
+Then build an Apptainer `.sif` image using:
 
-Then build, tag, and upload a Dockerfile to the registry:
 ```
-❯ podman build -v $PWD:/src . -t localhost:5000/td
-❯ podman push localhost:5000/td
-```
-The image from the registry can now be converted:
-```
-❯ SINGULARITY_NOHTTPS=1 singularity pull docker://localhost:5000/td:latest
+❯ apptainer build myimage.sif oci-archive://myimage.tar
 ```
 
 ## Reproducing GitHub Action builds locally (outside a container)

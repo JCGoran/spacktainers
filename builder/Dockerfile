@@ -7,12 +7,17 @@ FROM $BASE_IMAGE as bootstrap
 ENV SPACK_ROOT=/opt/spack \
     REPOS_ROOT=/opt/spack-repos \
     CURRENTLY_BUILDING_DOCKER_IMAGE=1 \
-    DEBEAN_FRONTEND=noninteractive \
+    DEBIAN_FRONTEND=noninteractive \
     container=docker
 
-RUN apt-get update \
-    && apt-get install -y build-essential curl environment-modules file gcc-12 g++-12 gfortran gfortran-12 git python3 python3-boto3 rpm unzip \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y build-essential curl environment-modules file gcc-12 g++-12 gfortran gfortran-12 git python3 python3-boto3 rpm unzip software-properties-common && \
+    apt-add-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y python3.11-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN cp -a /usr/bin/python3.11 /usr/bin/python3
 
 # Yes, again. Line 1 by itself is not enough to export this ARG into the shell in RUN
 ARG BASE_IMAGE
@@ -52,6 +57,9 @@ RUN [ -f ~/.profile ]                                               \
 WORKDIR /root
 SHELL ["docker-shell"]
 
+# debugging
+RUN spack python --version
+
 # Creates the package cache
 RUN spack compiler find --scope=site \
     && spack compiler list
@@ -64,7 +72,7 @@ RUN spack config --scope=site add "config:install_tree:padded_length:128" \
 # Set up our repos, ONBUILD will update this
 RUN mkdir $REPOS_ROOT && cd $REPOS_ROOT \
     && pwd && echo $REPOS_ROOT && echo $REPOS_BRANCH && ls -al \
-    && git clone --depth=1 --single-branch --branch $REPOS_BRANCH https://github.com/BlueBrain/spack.git .
+    && git clone --depth=1 --single-branch --branch $REPOS_BRANCH https://github.com/JCGoran/spack.git .
 
 # Add custom repositories: order matters, last one will be preferred
 RUN spack repo add --scope=site $REPOS_ROOT/bluebrain/repo-patches
@@ -96,25 +104,19 @@ ONBUILD COPY spack.yaml /opt/spack-environment/spack.yaml
 # May be needed for ARM compilers
 ONBUILD RUN . /etc/profile.d/modules.sh
 
-# Set the git token for CI builds
-ONBUILD ARG CI_JOB_TOKEN
-ONBUILD RUN if [[ -n "${CI_JOB_TOKEN}" ]]; then git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@bbpgitlab.epfl.ch/".insteadOf ssh://git@bbpgitlab.epfl.ch/ ; fi
-
-# Set the git token for manual builds
-ONBUILD ARG GITLAB_PRIVATE_TOKEN
-ONBUILD RUN if [[ -n "${GITLAB_PRIVATE_TOKEN}" ]]; then git config --global url."https://oauth2:${GITLAB_PRIVATE_TOKEN}@bbpgitlab.epfl.ch/".insteadOf ssh://git@bbpgitlab.epfl.ch/ ; fi
-
 ONBUILD RUN git config --list
 
 ONBUILD ARG MIRROR_URL_ARG
 ONBUILD ARG MIRROR_AUTH_ARG
 ONBUILD ARG REPOS_BRANCH="matz-e/spacktainer-readiness"
 ONBUILD ARG CACHE_BUCKET
-ONBUILD RUN if [ -n "${CACHE_BUCKET}" ]; then \
-    echo spack mirror add --scope=site --autopush ${MIRROR_URL_ARG} ${MIRROR_AUTH_ARG} build_s3 s3://${CACHE_BUCKET}; \
-    spack mirror add --scope=site --autopush ${MIRROR_URL_ARG} ${MIRROR_AUTH_ARG} build_s3 s3://${CACHE_BUCKET}; \
-    fi
+ONBUILD RUN spack mirror add --scope=site --unsigned --autopush build_s3 file:///opt/spack-cache/
 ONBUILD RUN spack config blame mirrors
+ONBUILD RUN spack config --scope site add config:verify_ssl:False; \
+spack config --scope site add config:require_checksum:False; \
+spack config --scope site add config:allow_signed:False; \
+spack config --scope site add config:unsigned:True
+
 
 # Update our repos
 ONBUILD RUN cd $REPOS_ROOT \
@@ -129,7 +131,7 @@ ONBUILD RUN spack env activate /opt/spack-environment; \
     spack config add packages:all:require:target=x86_64_v3 && \
     spack config add concretizer:targets:granularity:generic && \
     spack concretize && \
-    spack install --show-log-on-error --fail-fast && \
+    spack install --no-check-signature --no-checksum --show-log-on-error --fail-fast && \
     spack gc -y
 
 ONBUILD RUN if [ -n "${MIRROR_URL}" ]; then spack mirror rm build_s3; fi
